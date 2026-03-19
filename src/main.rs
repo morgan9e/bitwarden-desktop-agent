@@ -37,6 +37,9 @@ struct Args {
 
     #[arg(long)]
     remove: bool,
+
+    #[arg(long)]
+    change_pin: bool,
 }
 
 fn user_hash(email: &str) -> String {
@@ -88,6 +91,35 @@ fn main() {
             .unwrap_or_else(|e| log::fatal(&format!("store failed: {e}")));
         key_bytes.zeroize();
         log::info(&format!("key sealed via {}", store.name()));
+        log::info("wiped key from memory");
+        return;
+    }
+
+    if args.change_pin {
+        let uid = match store.find_key() {
+            Some(uid) => uid,
+            None => log::fatal("no enrolled key found"),
+        };
+
+        let old_pw = prompt(&format!("current {} password:", store.name()))
+            .unwrap_or_else(|| log::fatal("no password provided"));
+        let mut data = store
+            .load(&uid, &old_pw)
+            .unwrap_or_else(|e| log::fatal(&format!("unseal failed: {e}")));
+
+        let new_pw = prompt(&format!("new {} password:", store.name()))
+            .unwrap_or_else(|| log::fatal("no password provided"));
+        let new_pw2 = prompt(&format!("confirm {} password:", store.name()))
+            .unwrap_or_else(|| log::fatal("no password provided"));
+        if new_pw != new_pw2 {
+            log::fatal("passwords don't match");
+        }
+
+        store
+            .store(&uid, &data, &new_pw)
+            .unwrap_or_else(|e| log::fatal(&format!("seal failed: {e}")));
+        data.zeroize();
+        log::info("pin changed");
         log::info("wiped key from memory");
         return;
     }
