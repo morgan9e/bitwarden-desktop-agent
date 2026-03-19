@@ -15,10 +15,11 @@ launchd:
 	mkdir -p $(HOME)/Library/LaunchAgents
 	sed 's|/Users/USER/.local/bin|$(PREFIX)|' docs/com.bitwarden.agent.plist \
 		> $(HOME)/Library/LaunchAgents/com.bitwarden.agent.plist
-	launchctl load $(HOME)/Library/LaunchAgents/com.bitwarden.agent.plist
+	launchctl bootout gui/$$(id -u) $(HOME)/Library/LaunchAgents/com.bitwarden.agent.plist 2>/dev/null || true
+	launchctl bootstrap gui/$$(id -u) $(HOME)/Library/LaunchAgents/com.bitwarden.agent.plist
 
 launchd-unload:
-	launchctl unload $(HOME)/Library/LaunchAgents/com.bitwarden.agent.plist 2>/dev/null || true
+	launchctl bootout gui/$$(id -u) $(HOME)/Library/LaunchAgents/com.bitwarden.agent.plist 2>/dev/null || true
 	rm -f $(HOME)/Library/LaunchAgents/com.bitwarden.agent.plist
 
 systemd:
