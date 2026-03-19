@@ -1,0 +1,12 @@
+[Unit]
+Description=Bitwarden Desktop Agent
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/bw-agent --email %I
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

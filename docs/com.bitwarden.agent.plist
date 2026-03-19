@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bitwarden.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/USER/.local/bin/bw-agent</string>
+        <string>--email</string>
+        <string>USER@EXAMPLE.COM</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardErrorPath</key>
+    <string>/tmp/bw-agent.log</string>
+</dict>
+</plist>

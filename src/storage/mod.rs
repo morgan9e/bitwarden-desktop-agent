@@ -2,6 +2,7 @@ pub mod pin;
 
 pub trait KeyStore {
     fn name(&self) -> &str;
+    #[allow(dead_code)]
     fn is_available(&self) -> bool;
     fn has_key(&self, uid: &str) -> bool;
     fn store(&self, uid: &str, data: &[u8], auth: &str) -> Result<(), String>;

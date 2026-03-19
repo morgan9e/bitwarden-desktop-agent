@@ -113,6 +113,7 @@ pub fn get_prompter(name: Option<&str>) -> Prompter {
     }
 }
 
+#[allow(dead_code)]
 pub fn available() -> Vec<&'static str> {
     let mut found = vec!["cli"];
     if cfg!(target_os = "macos") {
