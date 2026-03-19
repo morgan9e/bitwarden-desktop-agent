@@ -1,0 +1,131 @@
+use std::io::{self, BufRead, Write};
+use std::process::Command;
+
+pub type Prompter = Box<dyn Fn(&str) -> Option<String>>;
+
+fn cli() -> Prompter {
+    Box::new(|msg: &str| {
+        eprint!("{msg} ");
+        io::stderr().flush().ok();
+        let mut line = String::new();
+        io::stdin().lock().read_line(&mut line).ok()?;
+        let trimmed = line.trim_end().to_string();
+        if trimmed.is_empty() { None } else { Some(trimmed) }
+    })
+}
+
+fn osascript() -> Prompter {
+    Box::new(|msg: &str| {
+        let script = format!(
+            "display dialog \"{}\" with title \"Bitwarden\" \
+             default answer \"\" with hidden answer \
+             buttons {{\"Cancel\",\"OK\"}} default button \"OK\"",
+            msg
+        );
+        let out = Command::new("osascript").args(["-e", &script]).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for part in stdout.trim().split(',') {
+            if let Some(val) = part.trim().strip_prefix("text returned:") {
+                let v = val.trim().to_string();
+                return if v.is_empty() { None } else { Some(v) };
+            }
+        }
+        None
+    })
+}
+
+fn zenity() -> Prompter {
+    Box::new(|msg: &str| {
+        let out = Command::new("zenity")
+            .args(["--entry", "--hide-text", "--title", "", "--text", msg, "--width", "300"])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    })
+}
+
+fn kdialog() -> Prompter {
+    Box::new(|msg: &str| {
+        let out = Command::new("kdialog")
+            .args(["--password", msg, "--title", "Bitwarden"])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    })
+}
+
+fn ssh_askpass() -> Option<Prompter> {
+    let binary = std::env::var("SSH_ASKPASS")
+        .ok()
+        .or_else(|| which("ssh-askpass"))?;
+    Some(Box::new(move |msg: &str| {
+        let out = Command::new(&binary).arg(msg).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    }))
+}
+
+fn which(name: &str) -> Option<String> {
+    Command::new("which")
+        .arg(name)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+pub fn get_prompter(name: Option<&str>) -> Prompter {
+    match name {
+        Some("cli") => cli(),
+        Some("osascript") => osascript(),
+        Some("zenity") => zenity(),
+        Some("kdialog") => kdialog(),
+        Some("ssh-askpass") => ssh_askpass().unwrap_or_else(|| {
+            crate::log::fatal("SSH_ASKPASS not set and ssh-askpass not found")
+        }),
+        Some(other) => crate::log::fatal(&format!("unknown askpass provider: {other}")),
+        None => {
+            if cfg!(target_os = "macos") {
+                return osascript();
+            }
+            if which("zenity").is_some() {
+                return zenity();
+            }
+            if which("kdialog").is_some() {
+                return kdialog();
+            }
+            cli()
+        }
+    }
+}
+
+pub fn available() -> Vec<&'static str> {
+    let mut found = vec!["cli"];
+    if cfg!(target_os = "macos") {
+        found.push("osascript");
+    }
+    if which("zenity").is_some() {
+        found.push("zenity");
+    }
+    if which("kdialog").is_some() {
+        found.push("kdialog");
+    }
+    if which("ssh-askpass").is_some() || std::env::var("SSH_ASKPASS").is_ok() {
+        found.push("ssh-askpass");
+    }
+    found
+}
