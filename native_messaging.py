@@ -6,15 +6,17 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 
 import log
+from askpass import Prompter
 from crypto import SymmetricKey, enc_string_encrypt, enc_string_decrypt, enc_string_to_dict, dict_to_enc_string
-from gui import ask_password
+from secmem import wipe
 from storage import KeyStore
 
 
 class BiometricBridge:
-    def __init__(self, store: KeyStore, user_id: str):
+    def __init__(self, store: KeyStore, user_id: str, prompter: Prompter):
         self._store = store
         self._uid = user_id
+        self._prompt = prompter
         self._sessions: dict[str, SymmetricKey] = {}
 
     def __call__(self, msg: dict) -> dict | None:
@@ -42,7 +44,7 @@ class BiometricBridge:
         self._sessions[app_id] = shared
 
         encrypted = pub_key.encrypt(
-            shared.raw,
+            bytes(shared.raw),
             asym_padding.OAEP(
                 mgf=asym_padding.MGF1(algorithm=hashes.SHA1()),
                 algorithm=hashes.SHA1(), label=None,
@@ -50,7 +52,6 @@ class BiometricBridge:
         )
 
         log.info(f"handshake complete, app={app_id[:12]}")
-
         return {
             "appId": app_id,
             "command": "setupEncryption",
@@ -83,40 +84,51 @@ class BiometricBridge:
         encrypted = enc_string_encrypt(json.dumps(resp), key)
         return {"appId": app_id, "messageId": mid, "message": enc_string_to_dict(encrypted)}
 
+    def _reply(self, cmd: str, mid: int, **kwargs) -> dict:
+        return {"command": cmd, "messageId": mid, "timestamp": int(time.time() * 1000), **kwargs}
+
     def _dispatch(self, cmd: str, mid: int) -> dict | None:
-        ts = int(time.time() * 1000)
+        handlers = {
+            "unlockWithBiometricsForUser": self._handle_unlock,
+            "getBiometricsStatus": self._handle_status,
+            "getBiometricsStatusForUser": self._handle_status,
+            "authenticateWithBiometrics": self._handle_auth,
+        }
+        handler = handlers.get(cmd)
+        if handler is None:
+            return None
+        return handler(cmd, mid)
 
-        if cmd == "unlockWithBiometricsForUser":
-            key_b64 = self._unseal_key()
-            if key_b64 is None:
-                log.warn("unlock denied or failed")
-                return {"command": cmd, "messageId": mid, "timestamp": ts, "response": False}
-            log.info("-> unlock granted, key delivered")
-            return {"command": cmd, "messageId": mid, "timestamp": ts, "response": True, "userKeyB64": key_b64}
+    def _handle_unlock(self, cmd: str, mid: int) -> dict:
+        key_b64 = self._unseal_key()
+        if key_b64 is None:
+            log.warn("unlock denied or failed")
+            return self._reply(cmd, mid, response=False)
+        log.info("-> unlock granted")
+        resp = self._reply(cmd, mid, response=True, userKeyB64=key_b64)
+        key_b64 = None
+        return resp
 
-        if cmd in ("getBiometricsStatus", "getBiometricsStatusForUser"):
-            log.info(f"-> biometrics available")
-            return {"command": cmd, "messageId": mid, "timestamp": ts, "response": 0}
+    def _handle_status(self, cmd: str, mid: int) -> dict:
+        log.info("-> biometrics available")
+        return self._reply(cmd, mid, response=0)
 
-        if cmd == "authenticateWithBiometrics":
-            log.info("-> authenticated")
-            return {"command": cmd, "messageId": mid, "timestamp": ts, "response": True}
-
-        return None
+    def _handle_auth(self, cmd: str, mid: int) -> dict:
+        log.info("-> authenticated")
+        return self._reply(cmd, mid, response=True)
 
     def _unseal_key(self) -> str | None:
-        log.info(f"requesting {self._store.name} password via GUI")
-        pw = ask_password("Bitwarden Unlock", f"Enter {self._store.name} password:")
+        pw = self._prompt(f"Enter {self._store.name} password:")
         if pw is None:
-            log.info("user cancelled dialog")
+            log.info("cancelled")
             return None
         try:
             raw = self._store.load(self._uid, pw)
-            b64 = base64.b64encode(raw).decode()
-            log.info(f"unsealed {len(raw)}B key from {self._store.name}")
-            raw = None
             pw = None
-            log.info("key material wiped from memory")
+            b64 = base64.b64encode(bytes(raw)).decode()
+            if isinstance(raw, bytearray):
+                wipe(raw)
+            log.info(f"unsealed {len(raw)}B from {self._store.name}")
             return b64
         except Exception as e:
             log.error(f"unseal failed: {e}")

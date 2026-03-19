@@ -1,15 +1,18 @@
-import base64
 import hashlib
-import hmac
 import os
 from pathlib import Path
 
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from . import KeyStore
 
+VERSION = 1
 STORE_DIR = Path.home() / ".cache" / "com.bitwarden.desktop" / "keys"
+
+SCRYPT_N = 2**17
+SCRYPT_R = 8
+SCRYPT_P = 1
+SCRYPT_MAXMEM = 256 * 1024 * 1024
 
 
 class PinKeyStore(KeyStore):
@@ -33,28 +36,21 @@ class PinKeyStore(KeyStore):
 
     def store(self, uid: str, data: bytes, auth: str):
         salt = os.urandom(32)
-        enc_key, mac_key = _derive(auth, salt)
-        iv = os.urandom(16)
-        padder = padding.PKCS7(128).padder()
-        padded = padder.update(data) + padder.finalize()
-        ct = Cipher(algorithms.AES(enc_key), modes.CBC(iv)).encryptor()
-        encrypted = ct.update(padded) + ct.finalize()
-        mac = hmac.new(mac_key, salt + iv + encrypted, hashlib.sha256).digest()
-        blob = salt + iv + mac + encrypted
+        key = _derive(auth, salt)
+        nonce = os.urandom(12)
+        ct = AESGCM(key).encrypt(nonce, data, salt)
+        blob = bytes([VERSION]) + salt + nonce + ct
         self._path(uid).write_bytes(blob)
         os.chmod(str(self._path(uid)), 0o600)
 
     def load(self, uid: str, auth: str) -> bytes:
         blob = self._path(uid).read_bytes()
-        salt, iv, mac_stored, ct = blob[:32], blob[32:48], blob[48:80], blob[80:]
-        enc_key, mac_key = _derive(auth, salt)
-        mac_check = hmac.new(mac_key, salt + iv + ct, hashlib.sha256).digest()
-        if not hmac.compare_digest(mac_stored, mac_check):
-            raise ValueError("Wrong PIN or corrupted data")
-        dec = Cipher(algorithms.AES(enc_key), modes.CBC(iv)).decryptor()
-        padded = dec.update(ct) + dec.finalize()
-        unpadder = padding.PKCS7(128).unpadder()
-        return unpadder.update(padded) + unpadder.finalize()
+        _ver, salt, nonce, ct = blob[0], blob[1:33], blob[33:45], blob[45:]
+        key = _derive(auth, salt)
+        try:
+            return AESGCM(key).decrypt(nonce, ct, salt)
+        except Exception:
+            raise ValueError("wrong password or corrupted data")
 
     def remove(self, uid: str):
         p = self._path(uid)
@@ -62,6 +58,8 @@ class PinKeyStore(KeyStore):
             p.unlink()
 
 
-def _derive(password: str, salt: bytes) -> tuple[bytes, bytes]:
-    raw = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 600_000, dklen=64)
-    return raw[:32], raw[32:]
+def _derive(password: str, salt: bytes) -> bytes:
+    return hashlib.scrypt(
+        password.encode(), salt=salt,
+        n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P, dklen=32, maxmem=SCRYPT_MAXMEM,
+    )

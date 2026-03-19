@@ -6,6 +6,8 @@ from pathlib import Path
 
 import log
 
+MAX_MSG = 1024 * 1024
+
 
 def get_socket_path() -> Path:
     cache = Path.home() / ".cache" / "com.bitwarden.desktop"
@@ -28,7 +30,7 @@ def read_message(conn: socket.socket) -> dict | None:
     if not header:
         return None
     length = struct.unpack("=I", header)[0]
-    if length == 0 or length > 1024 * 1024:
+    if length == 0 or length > MAX_MSG:
         return None
     data = recv_exact(conn, length)
     if not data:
