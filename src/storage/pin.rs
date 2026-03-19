@@ -114,6 +114,17 @@ impl KeyStore for PinKeyStore {
             fs::remove_file(p).ok();
         }
     }
+
+    fn find_key(&self) -> Option<String> {
+        let entries = fs::read_dir(&self.dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("enc") {
+                return path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string());
+            }
+        }
+        None
+    }
 }
 
 fn derive(password: &str, salt: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
