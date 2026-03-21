@@ -78,13 +78,18 @@ fn main() {
         let (mut key_bytes, server_uid) = auth::login(email, &pw, &args.server, &prompt);
         log::info(&format!("authenticated, uid={server_uid}"));
 
-        let auth = prompt(&format!("choose {} password:", store.name()))
-            .unwrap_or_else(|| log::fatal("no password provided"));
-        let auth2 = prompt(&format!("confirm {} password:", store.name()))
-            .unwrap_or_else(|| log::fatal("no password provided"));
-        if auth != auth2 {
-            log::fatal("passwords don't match");
-        }
+        let auth = if store.name() == "sep" {
+            String::new()
+        } else {
+            let a = prompt(&format!("choose {} password:", store.name()))
+                .unwrap_or_else(|| log::fatal("no password provided"));
+            let a2 = prompt(&format!("confirm {} password:", store.name()))
+                .unwrap_or_else(|| log::fatal("no password provided"));
+            if a != a2 {
+                log::fatal("passwords don't match");
+            }
+            a
+        };
 
         store
             .store(&uid, &key_bytes, &auth)
