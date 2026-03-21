@@ -4,7 +4,7 @@
 <dict>
     <key>keychain-access-groups</key>
     <array>
-        <string>$(AppIdentifierPrefix)com.bitwarden.agent</string>
+        <string>TEAM_ID.com.bitwarden.agent</string>
     </array>
 </dict>
 </plist>

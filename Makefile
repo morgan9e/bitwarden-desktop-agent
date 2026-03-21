@@ -1,5 +1,6 @@
 PREFIX ?= $(HOME)/.local/bin
 IDENTITY ?= -
+TEAM_ID ?= NONE
 
 all:
 	cargo build --release
@@ -10,8 +11,11 @@ install: all
 	install -m 755 target/release/bw-proxy $(PREFIX)/bw-proxy
 
 sep:
+	@if [ "$(TEAM_ID)" = "NONE" ]; then echo "error: TEAM_ID required (make sep TEAM_ID=... IDENTITY=...)"; exit 1; fi
+	mkdir -p target/release
+	sed 's/TEAM_ID/$(TEAM_ID)/' src/sep/sep-helper.entitlements > target/release/sep-helper.entitlements
 	swiftc -O -o target/release/sep-helper src/sep/sep-helper.swift
-	codesign --force --sign "$(IDENTITY)" --entitlements src/sep/sep-helper.entitlements target/release/sep-helper
+	codesign --force --sign "$(IDENTITY)" --entitlements target/release/sep-helper.entitlements target/release/sep-helper
 
 install-sep: sep
 	install -m 755 target/release/sep-helper $(PREFIX)/sep-helper
