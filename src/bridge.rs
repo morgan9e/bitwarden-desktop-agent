@@ -171,11 +171,7 @@ impl BiometricBridge {
     }
 
     fn unseal_key(&self) -> Option<String> {
-        let pw = if self.store.name() == "sep" {
-            String::new()
-        } else {
-            (self.prompt)(&format!("Enter {} password:", self.store.name()))?
-        };
+        let pw = (self.prompt)(&format!("Enter {} password:", self.store.name()))?;
         match self.store.load(&self.uid, &pw) {
             Ok(mut raw) => {
                 let len = raw.len();

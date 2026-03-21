@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import LocalAuthentication
 
 let service = "com.bitwarden.agent"
 let algo = SecKeyAlgorithm.eciesEncryptionCofactorVariableIVX963SHA256AESGCM
@@ -8,23 +9,37 @@ func sepTag(_ label: String) -> Data {
     "\(service).sep.\(label)".data(using: .utf8)!
 }
 
-func getSEPKey(_ label: String) -> SecKey? {
-    let q: [String: Any] = [
+func getSEPKey(_ label: String, password: String?) -> SecKey? {
+    var q: [String: Any] = [
         kSecClass as String: kSecClassKey,
         kSecAttrApplicationTag as String: sepTag(label),
         kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
         kSecReturnRef as String: true,
     ]
+
+    if let pw = password {
+        let ctx = LAContext()
+        ctx.setCredential(pw.data(using: .utf8), type: .applicationPassword)
+        q[kSecUseAuthenticationContext as String] = ctx
+    }
+
     var ref: CFTypeRef?
-    return SecItemCopyMatching(q as CFDictionary, &ref) == errSecSuccess ? (ref as! SecKey) : nil
+    let s = SecItemCopyMatching(q as CFDictionary, &ref)
+    if s == errSecSuccess { return (ref as! SecKey) }
+    if s != errSecItemNotFound { fatal("keychain query: \(s)") }
+    return nil
 }
 
-func createSEPKey(_ label: String) -> SecKey {
+func createSEPKey(_ label: String, password: String) -> SecKey {
     var err: Unmanaged<CFError>?
+
+    let ctx = LAContext()
+    ctx.setCredential(password.data(using: .utf8), type: .applicationPassword)
+
     guard let access = SecAccessControlCreateWithFlags(
         nil,
         kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        [.privateKeyUsage, .biometryCurrentSet],
+        [.privateKeyUsage, .applicationPassword],
         &err
     ) else {
         fatal("access control: \(err!.takeRetainedValue())")
@@ -39,6 +54,7 @@ func createSEPKey(_ label: String) -> SecKey {
             kSecAttrApplicationTag as String: sepTag(label),
             kSecAttrAccessControl as String: access,
         ] as [String: Any],
+        kSecUseAuthenticationContext as String: ctx,
     ]
 
     guard let key = SecKeyCreateRandomKey(attrs as CFDictionary, &err) else {
@@ -135,7 +151,7 @@ func fatal(_ msg: String) -> Never {
 }
 
 func usage() -> Never {
-    FileHandle.standardError.write("usage: sep-helper <store|load|remove|has> <label>\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: sep-helper <store|load|remove|has> <label> [password]\n".data(using: .utf8)!)
     exit(2)
 }
 
@@ -143,21 +159,24 @@ let args = CommandLine.arguments
 if args.count < 3 { usage() }
 let cmd = args[1]
 let label = args[2]
+let password: String? = args.count > 3 ? args[3] : nil
 
 switch cmd {
 case "store":
+    guard let pw = password else { fatal("password required for store") }
     let data = readStdin()
-    let privKey = getSEPKey(label) ?? createSEPKey(label)
+    removeSEPKey(label)
+    let privKey = createSEPKey(label, password: pw)
     guard let pubKey = SecKeyCopyPublicKey(privKey) else { fatal("no public key") }
     let ct = encrypt(pubKey, data)
     storeBlob(label, ct)
 
 case "load":
-    guard let privKey = getSEPKey(label) else { fatal("no SEP key for \(label)") }
+    guard let pw = password else { fatal("password required for load") }
+    guard let privKey = getSEPKey(label, password: pw) else { fatal("no SEP key for \(label)") }
     guard let ct = loadBlob(label) else { fatal("no data for \(label)") }
     let pt = decrypt(privKey, ct)
-    let b64 = pt.base64EncodedString()
-    print(b64)
+    print(pt.base64EncodedString())
 
 case "remove":
     removeBlob(label)

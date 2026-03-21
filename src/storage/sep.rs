@@ -36,10 +36,10 @@ impl KeyStore for SEPKeyStore {
             .unwrap_or(false)
     }
 
-    fn store(&self, uid: &str, data: &[u8], _auth: &str) -> Result<(), String> {
+    fn store(&self, uid: &str, data: &[u8], auth: &str) -> Result<(), String> {
         let b64 = B64.encode(data);
         let out = Command::new(helper_path())
-            .args(["store", uid])
+            .args(["store", uid, auth])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -57,9 +57,9 @@ impl KeyStore for SEPKeyStore {
         Ok(())
     }
 
-    fn load(&self, uid: &str, _auth: &str) -> Result<Vec<u8>, String> {
+    fn load(&self, uid: &str, auth: &str) -> Result<Vec<u8>, String> {
         let out = Command::new(helper_path())
-            .args(["load", uid])
+            .args(["load", uid, auth])
             .output()
             .map_err(|e| e.to_string())?;
 
