@@ -1,5 +1,4 @@
 pub mod pin;
-pub mod sep;
 
 pub trait KeyStore {
     fn name(&self) -> &str;
@@ -13,15 +12,7 @@ pub trait KeyStore {
 
 pub fn get_backend(preferred: Option<&str>) -> Box<dyn KeyStore> {
     match preferred {
-        Some("pin") => Box::new(pin::PinKeyStore::new(None)),
-        Some("sep") => Box::new(sep::SEPKeyStore::new()),
-        None => {
-            let s = sep::SEPKeyStore::new();
-            if s.is_available() {
-                return Box::new(s);
-            }
-            Box::new(pin::PinKeyStore::new(None))
-        }
+        Some("pin") | None => Box::new(pin::PinKeyStore::new(None)),
         Some(other) => crate::log::fatal(&format!("unknown backend: {other}")),
     }
 }
