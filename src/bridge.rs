@@ -13,11 +13,14 @@ use crate::crypto::{
 };
 use crate::storage::KeyStore;
 
+const KEY_PLACEHOLDER: &str = "__KEY_PLACEHOLDER_00000000_00000000__";
+
 pub struct BiometricBridge {
     store: Box<dyn KeyStore>,
     uid: String,
     prompt: Prompter,
     sessions: HashMap<String, SymmetricKey>,
+    pending_key: Option<String>,
 }
 
 impl BiometricBridge {
@@ -27,6 +30,7 @@ impl BiometricBridge {
             uid,
             prompt,
             sessions: HashMap::new(),
+            pending_key: None,
         }
     }
 
@@ -113,6 +117,12 @@ impl BiometricBridge {
 
         let key = self.sessions.get(app_id).unwrap();
         let mut resp_json = serde_json::to_string(&resp).unwrap();
+
+        if let Some(mut real_key) = self.pending_key.take() {
+            resp_json = resp_json.replace(KEY_PLACEHOLDER, &real_key);
+            real_key.zeroize();
+        }
+
         let encrypted = enc_string_encrypt(&resp_json, key);
         resp_json.zeroize();
 
@@ -161,9 +171,11 @@ impl BiometricBridge {
 
     fn handle_unlock(&mut self, cmd: &str, mid: i64) -> Value {
         match self.unseal_key() {
-            Some(key_b64) => {
+            Some(mut key_b64) => {
                 crate::log::info("-> unlock granted");
-                self.reply(cmd, mid, json!({"response": true, "userKeyB64": key_b64}))
+                let resp = self.reply(cmd, mid, json!({"response": true, "userKeyB64": KEY_PLACEHOLDER}));
+                self.pending_key = Some(std::mem::take(&mut key_b64));
+                resp
             }
             None => {
                 crate::log::warn("unlock denied or failed");
