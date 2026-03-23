@@ -60,11 +60,6 @@ pub fn enc_string_encrypt(plaintext: &str, key: &SymmetricKey) -> String {
     )
 }
 
-pub fn enc_string_decrypt(enc_str: &str, key: &SymmetricKey) -> Result<String, &'static str> {
-    let raw = enc_string_decrypt_bytes(enc_str, key)?;
-    String::from_utf8(raw.to_vec()).map_err(|_| "invalid utf8")
-}
-
 pub fn enc_string_decrypt_bytes(enc_str: &str, key: &SymmetricKey) -> Result<Zeroizing<Vec<u8>>, &'static str> {
     let (_t, rest) = enc_str.split_once('.').ok_or("bad format")?;
     let parts: Vec<&str> = rest.split('|').collect();

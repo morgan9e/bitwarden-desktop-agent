@@ -8,7 +8,8 @@ use zeroize::Zeroize;
 
 use crate::askpass::Prompter;
 use crate::crypto::{
-    enc_string_decrypt, enc_string_encrypt, enc_string_to_json, json_to_enc_string, SymmetricKey,
+    enc_string_decrypt_bytes, enc_string_encrypt, enc_string_to_json, json_to_enc_string,
+    SymmetricKey,
 };
 use crate::storage::KeyStore;
 
@@ -95,7 +96,7 @@ impl BiometricBridge {
 
         let key = self.sessions.get(app_id).unwrap();
         let enc_str = json_to_enc_string(enc_msg);
-        let plaintext = match enc_string_decrypt(&enc_str, key) {
+        let plaintext = match enc_string_decrypt_bytes(&enc_str, key) {
             Ok(p) => p,
             Err(_) => {
                 crate::log::error("message decryption failed");
@@ -103,7 +104,7 @@ impl BiometricBridge {
             }
         };
 
-        let data: Value = serde_json::from_str(&plaintext).ok()?;
+        let data: Value = serde_json::from_slice(&plaintext).ok()?;
         let cmd = data.get("command")?.as_str()?.to_string();
         let mid = data.get("messageId").and_then(|m| m.as_i64()).unwrap_or(0);
 
@@ -111,8 +112,9 @@ impl BiometricBridge {
         let resp = self.dispatch(&cmd, mid)?;
 
         let key = self.sessions.get(app_id).unwrap();
-        let resp_json = serde_json::to_string(&resp).unwrap();
+        let mut resp_json = serde_json::to_string(&resp).unwrap();
         let encrypted = enc_string_encrypt(&resp_json, key);
+        resp_json.zeroize();
 
         Some(json!({
             "appId": app_id,
@@ -171,20 +173,21 @@ impl BiometricBridge {
     }
 
     fn unseal_key(&self) -> Option<String> {
-        let pw = (self.prompt)(&format!("Enter {} password:", self.store.name()))?;
-        match self.store.load(&self.uid, &pw) {
+        let mut pw = (self.prompt)(&format!("Enter {} password:", self.store.name()))?;
+        let result = match self.store.load(&self.uid, &pw) {
             Ok(mut raw) => {
                 let len = raw.len();
                 let b64 = B64.encode(&raw);
                 raw.zeroize();
                 crate::log::info(&format!("unsealed {len}B from {}", self.store.name()));
-                crate::log::info("wiped key from memory");
                 Some(b64)
             }
             Err(e) => {
                 crate::log::error(&format!("unseal failed: {e}"));
                 None
             }
-        }
+        };
+        pw.zeroize();
+        result
     }
 }

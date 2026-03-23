@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::askpass::Prompter;
 use crate::crypto::{enc_string_decrypt_bytes, SymmetricKey};
@@ -44,10 +44,12 @@ pub fn login(
         password, email, kdf_type, kdf_iter, kdf_mem, kdf_par,
     ));
 
-    let pw_hash = {
+    let mut pw_hash = {
         let mut buf = [0u8; 32];
         pbkdf2::pbkdf2_hmac::<Sha256>(master_key.as_slice(), password.as_bytes(), 1, &mut buf);
-        B64.encode(buf)
+        let h = B64.encode(buf);
+        buf.zeroize();
+        h
     };
 
     let device_id = uuid::Uuid::new_v4().to_string();
@@ -64,6 +66,7 @@ pub fn login(
 
     crate::log::info(&format!("token {identity}/connect/token"));
     let token_resp = try_login(&format!("{identity}/connect/token"), &form, prompt);
+    pw_hash.zeroize();
 
     let enc_user_key = extract_encrypted_user_key(&token_resp);
     crate::log::info("decrypting user key...");

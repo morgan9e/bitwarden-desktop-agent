@@ -6,6 +6,8 @@ use std::thread;
 const MAX_MSG: usize = 1024 * 1024;
 
 fn socket_path() -> String {
+    // always use $HOME/.cache — never XDG_CACHE_HOME, which Flatpak
+    // overrides to a sandboxed path the agent can't see
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     PathBuf::from(home)
         .join(".cache")
@@ -65,7 +67,11 @@ fn send_ipc(sock: &mut UnixStream, data: &[u8]) {
 }
 
 fn main() {
-    let mut sock = UnixStream::connect(socket_path()).unwrap_or_else(|_| std::process::exit(1));
+    let sock_addr = socket_path();
+    let mut sock = UnixStream::connect(&sock_addr).unwrap_or_else(|e| {
+        eprintln!("bw-proxy: connect {sock_addr}: {e}");
+        std::process::exit(1);
+    });
 
     send_ipc(&mut sock, b"{\"command\":\"connected\"}");
 

@@ -24,14 +24,14 @@ launchd-unload:
 
 systemd:
 	mkdir -p $(HOME)/.config/systemd/user
-	sed 's|%h/.local/bin|$(PREFIX)|' docs/bw-agent.service \
-		> $(HOME)/.config/systemd/user/bw-agent.service
+	sed 's|%h/.local/bin|$(PREFIX)|' docs/com.bitwarden.agent.service \
+		> $(HOME)/.config/systemd/user/com.bitwarden.agent.service
 	systemctl --user daemon-reload
-	systemctl --user enable --now bw-agent
+	systemctl --user enable --now com.bitwarden.agent
 
 systemd-unload:
-	systemctl --user disable --now bw-agent 2>/dev/null || true
-	rm -f $(HOME)/.config/systemd/user/bw-agent.service
+	systemctl --user disable --now com.bitwarden.agent 2>/dev/null || true
+	rm -f $(HOME)/.config/systemd/user/com.bitwarden.agent.service
 	systemctl --user daemon-reload
 
 clean:

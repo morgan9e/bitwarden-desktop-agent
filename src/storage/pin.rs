@@ -16,10 +16,19 @@ const SCRYPT_LOG_N: u8 = 17;
 const SCRYPT_R: u32 = 8;
 const SCRYPT_P: u32 = 1;
 
-fn store_dir() -> PathBuf {
+pub(super) fn cache_dir() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg);
+        }
+    }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home)
-        .join(".cache")
+    PathBuf::from(home).join(".cache")
+}
+
+fn store_dir() -> PathBuf {
+    cache_dir()
         .join("com.bitwarden.desktop")
         .join("keys")
 }

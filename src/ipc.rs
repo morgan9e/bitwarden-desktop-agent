@@ -11,6 +11,12 @@ pub fn socket_path() -> PathBuf {
 }
 
 fn dirs_cache() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg);
+        }
+    }
     dirs_home().join(".cache")
 }
 

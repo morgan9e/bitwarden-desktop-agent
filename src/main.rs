@@ -26,7 +26,8 @@ struct Args {
     #[arg(long, default_value = "https://vault.bitwarden.com")]
     server: String,
 
-    #[arg(long)]
+    #[cfg_attr(target_os = "linux", arg(long, help = "Key storage backend [pin, tpm2]"))]
+    #[cfg_attr(not(target_os = "linux"), arg(long, help = "Key storage backend [pin]"))]
     backend: Option<String>,
 
     #[arg(long)]
@@ -68,7 +69,7 @@ fn main() {
             "re-enrolling"
         });
 
-        let pw = args
+        let mut pw = args
             .password
             .clone()
             .or_else(|| prompt("master password:"))
@@ -76,22 +77,26 @@ fn main() {
 
         log::info(&format!("logging in as {email}"));
         let (mut key_bytes, server_uid) = auth::login(email, &pw, &args.server, &prompt);
+        pw.zeroize();
         log::info(&format!("authenticated, uid={server_uid}"));
 
-        let auth = prompt(&format!("choose {} password:", store.name()))
+        let mut auth = prompt(&format!("choose {} password:", store.name()))
             .unwrap_or_else(|| log::fatal("no password provided"));
-        let auth2 = prompt(&format!("confirm {} password:", store.name()))
+        let mut auth2 = prompt(&format!("confirm {} password:", store.name()))
             .unwrap_or_else(|| log::fatal("no password provided"));
         if auth != auth2 {
+            auth.zeroize();
+            auth2.zeroize();
             log::fatal("passwords don't match");
         }
+        auth2.zeroize();
 
         store
             .store(&uid, &key_bytes, &auth)
             .unwrap_or_else(|e| log::fatal(&format!("store failed: {e}")));
+        auth.zeroize();
         key_bytes.zeroize();
         log::info(&format!("key sealed via {}", store.name()));
-        log::info("wiped key from memory");
         return;
     }
 
@@ -101,26 +106,31 @@ fn main() {
             None => log::fatal("no enrolled key found"),
         };
 
-        let old_pw = prompt(&format!("current {} password:", store.name()))
+        let mut old_pw = prompt(&format!("current {} password:", store.name()))
             .unwrap_or_else(|| log::fatal("no password provided"));
         let mut data = store
             .load(&uid, &old_pw)
             .unwrap_or_else(|e| log::fatal(&format!("unseal failed: {e}")));
+        old_pw.zeroize();
 
-        let new_pw = prompt(&format!("new {} password:", store.name()))
+        let mut new_pw = prompt(&format!("new {} password:", store.name()))
             .unwrap_or_else(|| log::fatal("no password provided"));
-        let new_pw2 = prompt(&format!("confirm {} password:", store.name()))
+        let mut new_pw2 = prompt(&format!("confirm {} password:", store.name()))
             .unwrap_or_else(|| log::fatal("no password provided"));
         if new_pw != new_pw2 {
+            new_pw.zeroize();
+            new_pw2.zeroize();
+            data.zeroize();
             log::fatal("passwords don't match");
         }
+        new_pw2.zeroize();
 
         store
             .store(&uid, &data, &new_pw)
             .unwrap_or_else(|e| log::fatal(&format!("seal failed: {e}")));
+        new_pw.zeroize();
         data.zeroize();
-        log::info("pin changed");
-        log::info("wiped key from memory");
+        log::info("password changed");
         return;
     }
 

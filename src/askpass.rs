@@ -80,12 +80,12 @@ fn ssh_askpass() -> Option<Prompter> {
 }
 
 fn which(name: &str) -> Option<String> {
-    Command::new("which")
-        .arg(name)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    std::env::var_os("PATH")?
+        .to_str()?
+        .split(':')
+        .map(|dir| std::path::Path::new(dir).join(name))
+        .find(|p| p.is_file())
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 pub fn get_prompter(name: Option<&str>) -> Prompter {
