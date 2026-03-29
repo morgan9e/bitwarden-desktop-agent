@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "adw-askpass"]
+
 [package]
 name = "desktop-agent"
 version = "0.1.0"

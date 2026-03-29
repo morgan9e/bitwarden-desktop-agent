@@ -37,6 +37,20 @@ fn osascript() -> Prompter {
     })
 }
 
+fn adw_askpass() -> Prompter {
+    Box::new(|msg: &str| {
+        let out = Command::new("adw-askpass")
+            .args(["--password", "--title", "Bitwarden", "--text", msg])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    })
+}
+
 fn zenity() -> Prompter {
     Box::new(|msg: &str| {
         let out = Command::new("zenity")
@@ -92,6 +106,7 @@ pub fn get_prompter(name: Option<&str>) -> Prompter {
     match name {
         Some("cli") => cli(),
         Some("osascript") => osascript(),
+        Some("adw-askpass") => adw_askpass(),
         Some("zenity") => zenity(),
         Some("kdialog") => kdialog(),
         Some("ssh-askpass") => ssh_askpass().unwrap_or_else(|| {
@@ -101,6 +116,9 @@ pub fn get_prompter(name: Option<&str>) -> Prompter {
         None => {
             if cfg!(target_os = "macos") {
                 return osascript();
+            }
+            if which("adw-askpass").is_some() {
+                return adw_askpass();
             }
             if which("zenity").is_some() {
                 return zenity();
@@ -118,6 +136,9 @@ pub fn available() -> Vec<&'static str> {
     let mut found = vec!["cli"];
     if cfg!(target_os = "macos") {
         found.push("osascript");
+    }
+    if which("adw-askpass").is_some() {
+        found.push("adw-askpass");
     }
     if which("zenity").is_some() {
         found.push("zenity");
