@@ -1,0 +1,4 @@
+[submodule "adw-askpass"]
+	path = adw-askpass
+	url = git@github.com:morgan9e/adw-askpass.git
+	branch = main
