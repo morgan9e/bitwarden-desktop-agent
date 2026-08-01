@@ -1,0 +1,18 @@
+[package]
+name = "bw-key"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "bw_key"
+path = "src/lib.rs"
+
+[dependencies]
+base64 = "0.22"
+bw-proto = { path = "../bw-proto" }
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+libc = "0.2"
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+serde_json = "1"
+zeroize = "1"

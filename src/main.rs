@@ -1,164 +1,101 @@
 mod askpass;
 mod auth;
+mod blob;
 mod bridge;
 mod crypto;
+mod device;
+mod enroll;
 mod ipc;
+mod kdf;
 mod log;
-mod storage;
+mod net;
+mod unlock;
 
-use clap::Parser;
-use sha2::{Digest, Sha256};
-use zeroize::Zeroize;
+use std::sync::Arc;
+
+use clap::{Parser, Subcommand};
 
 use askpass::get_prompter;
-use bridge::BiometricBridge;
-use storage::get_backend;
+use bridge::{Bridge, Session};
+use device::Device;
+use unlock::Unlocker;
 
 #[derive(Parser)]
-#[command(about = "Bitwarden desktop bridge agent")]
+#[command(about = "Bitwarden desktop bridge agent", version)]
 struct Args {
-    #[arg(long)]
-    email: Option<String>,
-
-    #[arg(long)]
-    password: Option<String>,
-
-    #[arg(long, default_value = "https://vault.bitwarden.com")]
-    server: String,
-
-    #[cfg_attr(target_os = "linux", arg(long, help = "Key storage backend [pin, tpm2]"))]
-    #[cfg_attr(not(target_os = "linux"), arg(long, help = "Key storage backend [pin]"))]
-    backend: Option<String>,
-
-    #[arg(long)]
+    #[arg(long, global = true)]
     askpass: Option<String>,
 
-    #[arg(long)]
-    enroll: bool,
-
-    #[arg(long)]
-    remove: bool,
-
-    #[arg(long)]
-    change_pin: bool,
+    #[command(subcommand)]
+    cmd: Option<Cmd>,
 }
 
-fn user_hash(email: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(email.to_lowercase().trim().as_bytes());
-    let hash = hasher.finalize();
-    hex::encode(&hash[..8])
+#[derive(Subcommand)]
+enum Cmd {
+    Enroll {
+        #[arg(long)]
+        email: String,
+        #[arg(long, default_value = "https://vault.bitwarden.com")]
+        vault: String,
+        #[arg(long)]
+        password: Option<String>,
+        #[arg(long, default_value = "desktop")]
+        label: String,
+        #[arg(long, requires = "token")]
+        server: Option<String>,
+        #[arg(long, requires = "server")]
+        token: Option<String>,
+    },
+    ChangePin,
+    Remove,
+    Status,
 }
 
 fn main() {
     let args = Args::parse();
-    let store = get_backend(args.backend.as_deref());
     let prompt = get_prompter(args.askpass.as_deref());
-    log::info(&format!("backend: {}", store.name()));
 
-    if args.enroll {
-        let email = args
-            .email
-            .as_deref()
-            .unwrap_or_else(|| log::fatal("--email required for enrollment"));
-        let uid = user_hash(email);
-
-        log::info(if !store.has_key(&uid) {
-            "enrolling"
-        } else {
-            "re-enrolling"
-        });
-
-        let mut pw = args
-            .password
-            .clone()
-            .or_else(|| prompt("master password:"))
-            .unwrap_or_else(|| log::fatal("no password provided"));
-
-        log::info(&format!("logging in as {email}"));
-        let (mut key_bytes, server_uid) = auth::login(email, &pw, &args.server, &prompt);
-        pw.zeroize();
-        log::info(&format!("authenticated, uid={server_uid}"));
-
-        let mut auth = prompt(&format!("choose {} password:", store.name()))
-            .unwrap_or_else(|| log::fatal("no password provided"));
-        let mut auth2 = prompt(&format!("confirm {} password:", store.name()))
-            .unwrap_or_else(|| log::fatal("no password provided"));
-        if auth != auth2 {
-            auth.zeroize();
-            auth2.zeroize();
-            log::fatal("passwords don't match");
+    match args.cmd {
+        Some(Cmd::Enroll {
+            email,
+            vault,
+            password,
+            label,
+            server,
+            token,
+        }) => {
+            let server = match (server, token) {
+                (Some(addr), Some(token)) => Some(enroll::ServerEnrollment { addr, token }),
+                _ => None,
+            };
+            enroll::enroll(&email, &vault, password, &label, server, &prompt)
+                .unwrap_or_else(|e| log::fatal(&format!("enroll failed: {e}")));
         }
-        auth2.zeroize();
-
-        store
-            .store(&uid, &key_bytes, &auth)
-            .unwrap_or_else(|e| log::fatal(&format!("store failed: {e}")));
-        auth.zeroize();
-        key_bytes.zeroize();
-        log::info(&format!("key sealed via {}", store.name()));
-        return;
+        Some(Cmd::ChangePin) => {
+            enroll::change_pin(&prompt)
+                .unwrap_or_else(|e| log::fatal(&format!("change-pin failed: {e}")));
+        }
+        Some(Cmd::Remove) => {
+            enroll::remove().unwrap_or_else(|e| log::fatal(&format!("remove failed: {e}")));
+        }
+        Some(Cmd::Status) => enroll::status(),
+        None => serve(prompt),
     }
+}
 
-    if args.change_pin {
-        let uid = match store.find_key() {
-            Some(uid) => uid,
-            None => log::fatal("no enrolled key found"),
-        };
+fn serve(prompt: askpass::Prompter) {
+    bw_proto::paths::ensure_state_dir()
+        .unwrap_or_else(|e| log::fatal(&format!("state directory: {e}")));
 
-        let mut old_pw = prompt(&format!("current {} password:", store.name()))
-            .unwrap_or_else(|| log::fatal("no password provided"));
-        let mut data = store
-            .load(&uid, &old_pw)
-            .unwrap_or_else(|e| log::fatal(&format!("unseal failed: {e}")));
-        old_pw.zeroize();
-
-        let mut new_pw = prompt(&format!("new {} password:", store.name()))
-            .unwrap_or_else(|| log::fatal("no password provided"));
-        let mut new_pw2 = prompt(&format!("confirm {} password:", store.name()))
-            .unwrap_or_else(|| log::fatal("no password provided"));
-        if new_pw != new_pw2 {
-            new_pw.zeroize();
-            new_pw2.zeroize();
-            data.zeroize();
-            log::fatal("passwords don't match");
-        }
-        new_pw2.zeroize();
-
-        store
-            .store(&uid, &data, &new_pw)
-            .unwrap_or_else(|e| log::fatal(&format!("seal failed: {e}")));
-        new_pw.zeroize();
-        data.zeroize();
-        log::info("password changed");
-        return;
+    let device = Device::load(&bw_proto::paths::device_path())
+        .unwrap_or_else(|_| log::fatal("not enrolled — run `bw-agent enroll --email <email>`"));
+    if !blob::exists(&bw_proto::paths::blob_path()) {
+        log::fatal("not enrolled — run `bw-agent enroll --email <email>`");
     }
+    log::info(&format!("device {} ({})", device.device_id, device.email));
 
-    if args.remove {
-        let email = args
-            .email
-            .as_deref()
-            .unwrap_or_else(|| log::fatal("--email required for --remove"));
-        let uid = user_hash(email);
-        if store.has_key(&uid) {
-            store.remove(&uid);
-            log::info(&format!("key removed for {email}"));
-        } else {
-            log::info(&format!("no key found for {email}"));
-        }
-        return;
-    }
-
-    let uid = match store.find_key() {
-        Some(uid) => {
-            log::info(&format!("found key: {uid}"));
-            uid
-        }
-        None => log::fatal("no enrolled key found (run with --email <email> --enroll first)"),
-    };
-
-    let mut bridge = BiometricBridge::new(store, uid, prompt);
-    let sock = ipc::socket_path();
+    let bridge = Arc::new(Bridge::new(Unlocker::new(device, prompt)));
+    let sock = bw_proto::paths::socket_path();
     log::info(&format!("listening on {}", sock.display()));
-    ipc::serve(&sock, |msg| bridge.handle(msg));
+    ipc::serve(&sock, move || Session::new(bridge.clone()));
 }

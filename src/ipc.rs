@@ -1,29 +1,57 @@
 use std::io::{Read, Write};
+use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::thread;
 
 const MAX_MSG: usize = 1024 * 1024;
+const MAX_CONNS: usize = 16;
 
-pub fn socket_path() -> PathBuf {
-    let cache = dirs_cache().join("com.bitwarden.desktop");
-    std::fs::create_dir_all(&cache).ok();
-    cache.join("s.bw")
+pub trait Handler {
+    fn handle(&mut self, msg: serde_json::Value) -> Option<serde_json::Value>;
 }
 
-fn dirs_cache() -> PathBuf {
-    #[cfg(target_os = "linux")]
-    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
-        if !xdg.is_empty() {
-            return PathBuf::from(xdg);
-        }
+#[cfg(target_os = "linux")]
+fn peer_uid(stream: &UnixStream) -> Option<u32> {
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut cred as *mut libc::ucred as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    if rc == 0 {
+        Some(cred.uid)
+    } else {
+        None
     }
-    dirs_home().join(".cache")
 }
 
-fn dirs_home() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+#[cfg(target_os = "macos")]
+fn peer_uid(stream: &UnixStream) -> Option<u32> {
+    let mut uid: libc::uid_t = 0;
+    let mut gid: libc::gid_t = 0;
+    let rc = unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) };
+    if rc == 0 {
+        Some(uid)
+    } else {
+        None
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn peer_uid(_stream: &UnixStream) -> Option<u32> {
+    None
 }
 
 fn recv_exact(stream: &mut UnixStream, n: usize) -> Option<Vec<u8>> {
@@ -56,15 +84,20 @@ pub fn send_message(stream: &mut UnixStream, msg: &serde_json::Value) {
     let _ = stream.write_all(&data);
 }
 
-pub fn serve<F>(sock_path: &Path, mut handler: F)
+pub fn serve<F, H>(sock_path: &Path, new_session: F)
 where
-    F: FnMut(serde_json::Value) -> Option<serde_json::Value>,
+    F: Fn() -> H + Send + Sync + 'static,
+    H: Handler,
 {
     if sock_path.exists() {
         std::fs::remove_file(sock_path).ok();
     }
 
-    let listener = UnixListener::bind(sock_path).unwrap_or_else(|e| {
+    let prev_umask = unsafe { libc::umask(0o177) };
+    let listener = UnixListener::bind(sock_path);
+    unsafe { libc::umask(prev_umask) };
+
+    let listener = listener.unwrap_or_else(|e| {
         crate::log::fatal(&format!("bind failed: {e}"));
     });
 
@@ -74,26 +107,50 @@ where
         std::fs::set_permissions(sock_path, std::fs::Permissions::from_mode(0o600)).ok();
     }
 
-    let cleanup = || {
-        if sock_path.exists() {
-            std::fs::remove_file(sock_path).ok();
-        }
-    };
-
     ctrlc_cleanup(sock_path.to_path_buf());
 
+    let own_uid = unsafe { libc::geteuid() };
+    let live = Arc::new(AtomicUsize::new(0));
+    let new_session = Arc::new(new_session);
+
     for stream in listener.incoming() {
-        match stream {
-            Ok(mut conn) => {
-                crate::log::info("client connected");
-                handle_conn(&mut conn, &mut handler);
-                crate::log::info("client disconnected");
-            }
+        let mut conn = match stream {
+            Ok(c) => c,
             Err(_) => break,
+        };
+
+        match peer_uid(&conn) {
+            Some(uid) if uid == own_uid => {}
+            Some(uid) => {
+                crate::log::warn(&format!("rejected connection from uid {uid}"));
+                continue;
+            }
+            None => {
+                crate::log::warn("rejected connection: peer credentials unavailable");
+                continue;
+            }
         }
+
+        if live.fetch_add(1, Ordering::SeqCst) >= MAX_CONNS {
+            live.fetch_sub(1, Ordering::SeqCst);
+            crate::log::warn("connection limit reached, dropping client");
+            continue;
+        }
+
+        let live = live.clone();
+        let new_session = new_session.clone();
+        thread::spawn(move || {
+            crate::log::info("client connected");
+            let mut session = new_session();
+            handle_conn(&mut conn, &mut session);
+            crate::log::info("client disconnected");
+            live.fetch_sub(1, Ordering::SeqCst);
+        });
     }
 
-    cleanup();
+    if sock_path.exists() {
+        std::fs::remove_file(sock_path).ok();
+    }
 }
 
 fn ctrlc_cleanup(path: PathBuf) {
@@ -106,10 +163,7 @@ fn ctrlc_cleanup(path: PathBuf) {
     .ok();
 }
 
-fn handle_conn<F>(conn: &mut UnixStream, handler: &mut F)
-where
-    F: FnMut(serde_json::Value) -> Option<serde_json::Value>,
-{
+fn handle_conn<H: Handler>(conn: &mut UnixStream, session: &mut H) {
     loop {
         let msg = match read_message(conn) {
             Some(m) => m,
@@ -123,7 +177,7 @@ where
             continue;
         }
 
-        if let Some(resp) = handler(msg) {
+        if let Some(resp) = session.handle(msg) {
             send_message(conn, &resp);
         }
     }
