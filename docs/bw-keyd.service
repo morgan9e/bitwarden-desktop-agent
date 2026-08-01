@@ -6,8 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=bwkey
-# Replace with this host's tailnet address.
-ExecStart=/usr/local/bin/bw-keyd --bind 100.64.0.1:8787
+# Defaults to the tailnet address of tailscale0, port 8787. Override with
+# --bind IFACE:PORT (utun* on macOS/BSD) or --bind ADDR:PORT. Never 0.0.0.0.
+ExecStart=/usr/local/bin/bw-keyd
 Restart=on-failure
 RestartSec=5
 

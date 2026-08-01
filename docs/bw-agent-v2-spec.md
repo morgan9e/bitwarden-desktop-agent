@@ -234,7 +234,7 @@ Written atomically: temporary file in the same directory → `fsync` → `rename
 | Client identity | `identity.key`, X25519 static keypair generated at enrollment |
 | Server identity | Static public key pinned in `device.toml`. A mismatch is a **hard failure** — never prompt to accept |
 | Binding | Server binds to the tailnet interface only. Never `0.0.0.0` |
-| Bind syntax | `--bind` takes `IFACE`, `IFACE:PORT`, `ADDR:PORT`, or `ADDR`, defaulting to `tailscale0:9797`. An interface name resolves to its address in `100.64.0.0/10` or `fd7a:115c:a1e0::/48`; other addresses on that interface are ignored, and an unresolvable name is fatal — never a fallback |
+| Bind syntax | `--bind` takes `IFACE`, `IFACE:PORT`, `ADDR:PORT`, or `ADDR`, defaulting to `tailscale0:8787`. An interface name resolves to its address in `100.64.0.0/10` or `fd7a:115c:a1e0::/48`; other addresses on that interface are ignored, and an unresolvable name is fatal — never a fallback |
 | Sessions | Fresh handshake per request. No resumption, no long-lived sessions |
 | Replay | Handled by Noise; no application-layer nonce needed |
 | Framing | 4-byte **big-endian** length prefix, then the Noise message |

@@ -13,9 +13,10 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 /// `utun*` whose number is not stable, so there the name must be given.
 pub const DEFAULT_IFACE: &str = "tailscale0";
 
-/// Arbitrary and unregistered. The port carries no security weight — the
-/// interface bind and the Noise handshake do — so it only needs to not collide.
-pub const DEFAULT_PORT: u16 = 9797;
+/// Matches the port `docs/bw-keyd.service` has always used. Arbitrary and
+/// unregistered: the port carries no security weight — the interface bind and
+/// the Noise handshake do — so it only needs to not collide.
+pub const DEFAULT_PORT: u16 = 8787;
 
 /// Tailscale allocates from 100.64.0.0/10 (CGNAT, RFC 6598) and
 /// fd7a:115c:a1e0::/48.

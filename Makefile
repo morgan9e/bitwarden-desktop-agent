@@ -1,5 +1,9 @@
 PREFIX ?= $(HOME)/.local/bin
 
+# The server is a system service, not a user one, so it installs elsewhere.
+SERVER_PREFIX ?= /usr/local/bin
+BWKEY_USER    ?= bwkey
+
 STATIC_TARGET     ?= x86_64-unknown-linux-musl
 STATIC_ARCH       := $(firstword $(subst -, ,$(STATIC_TARGET)))
 STATIC_TARGET_ENV := $(shell echo $(STATIC_TARGET) | tr 'a-z-' 'A-Z_')
@@ -38,6 +42,30 @@ install-server: all
 
 install-nm: install
 	PREFIX=$(PREFIX) sh docs/install-nm.sh
+
+# Whole server install: service user, binaries, unit, started. Run as root.
+# systemd creates and chowns /var/lib/bw-key from StateDirectory=, so the user
+# is the only thing needing setup — and only once.
+install-server-systemd: all
+	getent passwd $(BWKEY_USER) >/dev/null 2>&1 || \
+		useradd --system --no-create-home --shell /usr/sbin/nologin $(BWKEY_USER)
+	install -d -m 755 $(SERVER_PREFIX)
+	install -m 755 target/release/bw-keyd $(SERVER_PREFIX)/bw-keyd
+	install -m 755 target/release/bw-keyctl $(SERVER_PREFIX)/bw-keyctl
+	sed -e 's|/usr/local/bin|$(SERVER_PREFIX)|g' -e 's|^User=bwkey$$|User=$(BWKEY_USER)|' \
+		docs/bw-keyd.service > /etc/systemd/system/bw-keyd.service
+	systemctl daemon-reload
+	systemctl enable --now bw-keyd
+	@echo
+	@echo "admin as the service user, since devices.db is 0600:"
+	@echo "  sudo -u $(BWKEY_USER) $(SERVER_PREFIX)/bw-keyctl list"
+
+uninstall-server-systemd:
+	systemctl disable --now bw-keyd 2>/dev/null || true
+	rm -f /etc/systemd/system/bw-keyd.service
+	systemctl daemon-reload
+	rm -f $(SERVER_PREFIX)/bw-keyd $(SERVER_PREFIX)/bw-keyctl
+	@echo "left in place: user $(BWKEY_USER) and /var/lib/bw-key (holds the OPRF keys)"
 
 uninstall:
 	rm -f $(PREFIX)/bw-agent $(PREFIX)/bw-proxy $(PREFIX)/adw-askpass
@@ -78,4 +106,5 @@ clean:
 
 .PHONY: all submodules static  \
 	install install-server install-nm uninstall uninstall-nm test \
+	install-server-systemd uninstall-server-systemd \
 	launchd launchd-unload systemd systemd-unload clean
