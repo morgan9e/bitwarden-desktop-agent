@@ -1,8 +1,8 @@
 [workspace]
-members = [".", "adw-askpass"]
+members = [".", "adw-askpass", "bw-proto", "bw-key"]
 
 [package]
-name = "desktop-agent"
+name = "bw-agent"
 version = "0.1.0"
 edition = "2021"
 
@@ -35,9 +35,10 @@ ureq = { version = "2", features = ["json"] }
 uuid = { version = "1", features = ["v4"] }
 zeroize = { version = "1", features = ["derive"] }
 aes-gcm = "0.10"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-tempfile = "3"
+libc = "0.2"
+hkdf = "0.12"
+toml = "0.8"
+bw-proto = { path = "bw-proto" }
 
 [profile.release]
 strip = true

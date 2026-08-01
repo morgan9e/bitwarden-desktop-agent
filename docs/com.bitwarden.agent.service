@@ -8,5 +8,11 @@ ExecStart=%h/.local/bin/bw-agent
 Restart=on-failure
 RestartSec=5
 
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=%S/bw-agent
+MemoryDenyWriteExecute=true
+
 [Install]
 WantedBy=default.target

@@ -1,7 +1,7 @@
 use std::io::{self, BufRead, Write};
 use std::process::Command;
 
-pub type Prompter = Box<dyn Fn(&str) -> Option<String>>;
+pub type Prompter = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
 fn cli() -> Prompter {
     Box::new(|msg: &str| {

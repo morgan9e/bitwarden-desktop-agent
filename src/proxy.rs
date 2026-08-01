@@ -1,21 +1,8 @@
 use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
 use std::thread;
 
 const MAX_MSG: usize = 1024 * 1024;
-
-fn socket_path() -> String {
-    // always use $HOME/.cache — never XDG_CACHE_HOME, which Flatpak
-    // overrides to a sandboxed path the agent can't see
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home)
-        .join(".cache")
-        .join("com.bitwarden.desktop")
-        .join("s.bw")
-        .to_string_lossy()
-        .into_owned()
-}
 
 fn read_stdin() -> Option<Vec<u8>> {
     let mut header = [0u8; 4];
@@ -66,14 +53,25 @@ fn send_ipc(sock: &mut UnixStream, data: &[u8]) {
     let _ = sock.write_all(data);
 }
 
+/// `connected`/`disconnected` are the only two messages the proxy originates
+/// rather than forwards, and they go *to the browser*, not to the agent: the
+/// extension's `NativeMessagingBackground` flips `connected = true` only on
+/// receiving the former. Since PR #21782 every biometrics entry point returns
+/// early when that flag is false, so a proxy that swallows this message makes
+/// the extension report `DesktopDisconnected` no matter what the agent does.
+const CONNECTED: &[u8] = b"{\"command\":\"connected\"}";
+const DISCONNECTED: &[u8] = b"{\"command\":\"disconnected\"}";
+
 fn main() {
-    let sock_addr = socket_path();
+    // Same function the agent binds with. v1 resolved this path twice, in two
+    // different ways, and setting XDG_CACHE_HOME silently broke the pair.
+    let sock_addr = bw_proto::paths::socket_path();
     let mut sock = UnixStream::connect(&sock_addr).unwrap_or_else(|e| {
-        eprintln!("bw-proxy: connect {sock_addr}: {e}");
+        eprintln!("bw-proxy: connect {}: {e}", sock_addr.display());
         std::process::exit(1);
     });
 
-    send_ipc(&mut sock, b"{\"command\":\"connected\"}");
+    write_stdout(CONNECTED);
 
     let mut sock2 = sock.try_clone().unwrap();
     thread::spawn(move || {
@@ -83,6 +81,10 @@ fn main() {
                 None => break,
             }
         }
+        // The agent went away. Tell the extension before the port dies, so it
+        // clears its session state instead of holding a stale shared secret.
+        write_stdout(DISCONNECTED);
+        std::process::exit(0);
     });
 
     loop {
@@ -92,5 +94,5 @@ fn main() {
         }
     }
 
-    let _ = send_ipc(&mut sock, b"{\"command\":\"disconnected\"}");
+    write_stdout(DISCONNECTED);
 }

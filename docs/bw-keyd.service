@@ -1,0 +1,30 @@
+[Unit]
+Description=bw-agent keyserver
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bwkey
+# Replace with this host's tailnet address.
+ExecStart=/usr/local/bin/bw-keyd --bind 100.64.0.1:8787
+Restart=on-failure
+RestartSec=5
+
+StateDirectory=bw-key
+StateDirectoryMode=0700
+
+# Optional: run on every alert. Receives the message as its single argument.
+# Environment=BW_KEYD_ALERT_COMMAND=/usr/local/bin/notify-me
+
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target
