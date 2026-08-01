@@ -1,6 +1,6 @@
-//! §7.2 storage. One table, WAL mode.
+//! §7.2 storage. WAL mode, one table of substance plus a key/value scratch.
 //!
-//! Enrollment tokens and revocation tombstones are states within this table
+//! Enrollment tokens and revocation tombstones are states within `devices`
 //! rather than separate tables: a device only ever has one row, from the moment
 //! a token is issued until long after it is revoked.
 
@@ -30,7 +30,19 @@ CREATE TABLE IF NOT EXISTS devices (
     revoked_at   INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_static_pub ON devices(static_pub);
+
+-- Operator-facing scratch, never key material: it lives here rather than in a
+-- second file so the state directory stays devices.db plus server.key.
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 "#;
+
+/// Address `bw-keyd` last bound. Advisory: `bw-keyctl enroll` prints it so the
+/// operator can paste the command whole, and a stale value costs a placeholder,
+/// never correctness.
+pub const META_LISTEN: &str = "listen";
 
 pub struct Db {
     conn: Mutex<Connection>,
@@ -80,6 +92,23 @@ pub struct DeviceRow {
     pub created_at: i64,
     pub last_seen: Option<i64>,
     pub revoked_at: Option<i64>,
+}
+
+pub fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![key, value],
+    )
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
+pub fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>, String> {
+    use rusqlite::OptionalExtension;
+    conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
+        .optional()
+        .map_err(|e| e.to_string())
 }
 
 pub fn now() -> i64 {

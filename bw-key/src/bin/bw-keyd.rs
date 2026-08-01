@@ -1,6 +1,6 @@
-use bw_key::{alert, db, log, server, state};
+use bw_key::{alert, db, iface, log, server, state};
 
-use std::net::TcpListener;
+use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,15 +12,12 @@ use bw_proto::noise;
 #[derive(Parser)]
 #[command(name = "bw-keyd", about = "per-device key server for bw-agent", version)]
 struct Args {
-    /// Address to listen on. Must be a specific tailnet address, never 0.0.0.0.
-    #[arg(long)]
+    #[arg(long, default_value = iface::DEFAULT_IFACE)]
     bind: String,
 
-    /// State directory holding devices.db and server.key
     #[arg(long)]
     state: Option<PathBuf>,
 
-    /// Print the server's static public key and exit
     #[arg(long)]
     print_pubkey: bool,
 }
@@ -38,16 +35,27 @@ fn main() {
         return;
     }
 
-    reject_wildcard(&args.bind);
+    let bind = resolve(&args.bind).unwrap_or_else(|e| log::fatal(&e));
+    reject_wildcard(&bind);
 
     let store = Arc::new(db::Db::open(&dir.join(state::DB_FILE)).unwrap_or_else(|e| log::fatal(&e)));
     let rates = Arc::new(alert::Rates::new());
 
-    let listener = TcpListener::bind(&args.bind)
-        .unwrap_or_else(|e| log::fatal(&format!("bind {}: {e}", args.bind)));
+    let listener =
+        TcpListener::bind(&bind).unwrap_or_else(|e| log::fatal(&format!("bind {bind}: {e}")));
+
+    // `local_addr` rather than `args.bind`: it is what the kernel actually gave
+    // us, so a hostname or an ephemeral port resolves to something pasteable.
+    let addr = listener
+        .local_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| args.bind.clone());
+    if let Err(e) = store.with(|conn| db::set_meta(conn, db::META_LISTEN, &addr)) {
+        log::warn(&format!("could not publish listen address: {e}"));
+    }
+
     log::info(&format!(
-        "listening on {} (static {})",
-        args.bind,
+        "listening on {addr} (static {})",
         B64.encode(pubkey)
     ));
 
@@ -60,6 +68,42 @@ fn main() {
                 log::warn(&format!("connection: {e}"));
             }
         });
+    }
+}
+
+/// Turns `--bind` into something `TcpListener` accepts, resolving an interface
+/// name to its tailnet address.
+///
+/// Order matters: literal addresses are recognised before interface names so a
+/// host can never shadow one, and anything left unrecognised is passed through
+/// untouched, which keeps `--bind host.tailnet.ts.net:9797` resolving via DNS
+/// exactly as it did before.
+fn resolve(spec: &str) -> Result<String, String> {
+    if let Ok(addr) = spec.parse::<SocketAddr>() {
+        return Ok(addr.to_string());
+    }
+    if let Ok(ip) = spec.parse::<IpAddr>() {
+        return Ok(SocketAddr::new(ip, iface::DEFAULT_PORT).to_string());
+    }
+
+    let (name, port) = match spec.rsplit_once(':') {
+        Some((name, port)) => match port.parse::<u16>() {
+            Ok(p) => (name, p),
+            // Not a port, so not a form we handle — e.g. a bare IPv6 literal.
+            Err(_) => return Ok(spec.to_string()),
+        },
+        None => (spec, iface::DEFAULT_PORT),
+    };
+
+    match iface::tailnet_addr(name) {
+        Ok(ip) => Ok(SocketAddr::new(ip, port).to_string()),
+        // A hostname reaches here too, and DNS should get its turn. A bare name
+        // with no port cannot be a `host:port`, so that one is a real failure.
+        Err(e) if spec.contains(':') => {
+            log::info(&format!("{name} is not an interface ({e}); trying as a host"));
+            Ok(spec.to_string())
+        }
+        Err(e) => Err(e),
     }
 }
 

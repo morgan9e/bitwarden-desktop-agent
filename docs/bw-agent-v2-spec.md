@@ -234,6 +234,7 @@ Written atomically: temporary file in the same directory → `fsync` → `rename
 | Client identity | `identity.key`, X25519 static keypair generated at enrollment |
 | Server identity | Static public key pinned in `device.toml`. A mismatch is a **hard failure** — never prompt to accept |
 | Binding | Server binds to the tailnet interface only. Never `0.0.0.0` |
+| Bind syntax | `--bind` takes `IFACE`, `IFACE:PORT`, `ADDR:PORT`, or `ADDR`, defaulting to `tailscale0:9797`. An interface name resolves to its address in `100.64.0.0/10` or `fd7a:115c:a1e0::/48`; other addresses on that interface are ignored, and an unresolvable name is fatal — never a fallback |
 | Sessions | Fresh handshake per request. No resumption, no long-lived sessions |
 | Replay | Handled by Noise; no application-layer nonce needed |
 | Framing | 4-byte **big-endian** length prefix, then the Noise message |
@@ -451,9 +452,16 @@ CREATE TABLE devices (
 );
 
 CREATE UNIQUE INDEX idx_devices_static_pub ON devices(static_pub);
+
+CREATE TABLE meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 ```
 
-Enrollment tokens and revocation tombstones are represented as states within this table rather than as separate tables.
+Enrollment tokens and revocation tombstones are represented as states within `devices` rather than as separate tables.
+
+`meta` holds operator-facing scratch and never key material. Its only current entry is `listen`, the address `bw-keyd` bound at startup, which `bw-keyctl enroll` reads so it can print a `--server` the operator can paste without substitution. It is advisory: nothing authenticates it, and a stale value costs a placeholder rather than correctness. It lives here rather than in a third file so the state directory stays `devices.db` plus `server.key`.
 
 ### 7.3 Backup policy
 
@@ -600,9 +608,17 @@ WantedBy=default.target
 ### 11.2 Server unit
 
 ```ini
+[Unit]
+After=tailscaled.service
+Wants=tailscaled.service
+
 [Service]
 User=bwkey
 ExecStart=/usr/local/bin/bw-keyd
+# tailscaled being started does not mean the interface has an address yet, so
+# the first attempts may legitimately fail. Retrying is the whole handling.
+Restart=on-failure
+RestartSec=5
 StateDirectory=bw-key
 ProtectSystem=strict
 ProtectHome=true

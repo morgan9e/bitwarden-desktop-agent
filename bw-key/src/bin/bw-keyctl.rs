@@ -99,12 +99,17 @@ fn list(store: &db::Db) -> Result<(), String> {
 fn issue(store: &db::Db, key: &[u8; 32], label: &str) -> Result<(), String> {
     let server_pub = bw_proto::noise::public_key(key);
     let token = store.with(|conn| enroll::issue_token(conn, server_pub, label))?;
+    // The daemon publishes what it bound; fall back to the placeholder when it
+    // has never run here, so the line is still copyable with one substitution.
+    let server = store
+        .with(|conn| db::get_meta(conn, db::META_LISTEN))?
+        .unwrap_or_else(|| "<host:port>".into());
     println!("token (valid {} minutes, single use):", enroll::TOKEN_TTL_SECS / 60);
     println!();
     println!("  {token}");
     println!();
     println!("on the client:");
-    println!("  bw-agent enroll --email <email> --server <host:port> --token {token}");
+    println!("  bw-agent enroll --email <email> --server {server} --token {token}");
     log::info(&format!("enrollment token issued for {label}"));
     Ok(())
 }

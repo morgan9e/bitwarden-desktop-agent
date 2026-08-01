@@ -229,6 +229,7 @@ dependencies = [
  "bw-proto",
  "clap",
  "hex",
+ "libc",
  "rusqlite",
  "serde_json",
  "zeroize",
