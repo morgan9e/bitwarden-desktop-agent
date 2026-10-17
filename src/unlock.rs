@@ -9,6 +9,7 @@ use crate::device::{self, Device};
 use crate::kdf;
 use crate::net::{self, NetError};
 
+#[derive(Debug)]
 pub enum UnlockError {
     Cancelled,
     NotEnrolled,
@@ -79,32 +80,40 @@ impl Unlocker {
         &self,
         pin: &str,
     ) -> Result<Option<Zeroizing<[u8; kdf::OPRF_OUT_LEN]>>, UnlockError> {
-        let server = match self.device.server.as_deref() {
-            Some(addr) => Some((
-                addr,
-                device::server_public(&self.device).map_err(|e| {
-                    crate::log::error(&e);
-                    UnlockError::Failed
-                })?,
-            )),
-            None => None,
+        let server = ServerKey::for_device(&self.device).map_err(|e| {
+            crate::log::error(&e);
+            UnlockError::Failed
+        })?;
+        oprf_output(server.as_ref(), pin)
+    }
+}
+
+pub struct ServerKey {
+    pub addr: String,
+    pub public: [u8; 32],
+    pub identity: Zeroizing<[u8; 32]>,
+}
+
+impl ServerKey {
+    pub fn for_device(device: &Device) -> Result<Option<Self>, String> {
+        let Some(addr) = device.server.clone() else {
+            return Ok(None);
         };
-        oprf_output(server, pin)
+        Ok(Some(Self {
+            addr,
+            public: device::server_public(device)?,
+            identity: device::load_identity()?,
+        }))
     }
 }
 
 pub fn oprf_output(
-    server: Option<(&str, [u8; 32])>,
+    server: Option<&ServerKey>,
     pin: &str,
 ) -> Result<Option<Zeroizing<[u8; kdf::OPRF_OUT_LEN]>>, UnlockError> {
-    let Some((addr, server_pub)) = server else {
+    let Some(server) = server else {
         return Ok(None);
     };
-
-    let identity = device::load_or_create_identity().map_err(|e| {
-        crate::log::error(&e);
-        UnlockError::Failed
-    })?;
 
     let (state, blinded) = bw_proto::oprf::blind(pin.as_bytes()).map_err(|e| {
         crate::log::error(&format!("blind: {e}"));
@@ -112,7 +121,7 @@ pub fn oprf_output(
     })?;
 
     let (evaluated, tokens_left) =
-        net::eval(addr, &server_pub, &identity, &blinded).map_err(UnlockError::Server)?;
+        net::eval(&server.addr, &server.public, &server.identity, &blinded).map_err(UnlockError::Server)?;
     crate::log::info(&format!("server granted the attempt, {tokens_left} left"));
 
     let output = state.finalize(pin.as_bytes(), &evaluated).map_err(|e| {

@@ -11,6 +11,7 @@ use bw_proto::noise;
 const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RESPONSE: usize = 8 * 1024;
 
+#[derive(Debug)]
 pub enum NetError {
     Unreachable(String),
     Denied,

@@ -2,6 +2,7 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
@@ -35,26 +36,19 @@ pub fn new_device_id() -> String {
     hex::encode(bw_proto::rng::bytes::<16>())
 }
 
-pub fn load_or_create_identity() -> Result<[u8; 32], String> {
+pub fn load_identity() -> Result<Zeroizing<[u8; 32]>, String> {
     let path = bw_proto::paths::identity_path();
-    if path.exists() {
-        let raw = std::fs::read(&path).map_err(|e| e.to_string())?;
-        return <[u8; 32]>::try_from(raw.as_slice())
-            .map_err(|_| format!("{}: expected 32 bytes", path.display()));
-    }
+    let raw = Zeroizing::new(
+        std::fs::read(&path)
+            .map_err(|e| format!("{}: {e} — re-enroll with --server and --token", path.display()))?,
+    );
+    <[u8; 32]>::try_from(raw.as_slice())
+        .map(Zeroizing::new)
+        .map_err(|_| format!("{}: expected 32 bytes", path.display()))
+}
 
-    let key = bw_proto::noise::generate_private_key();
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    f.write_all(&key).map_err(|e| e.to_string())?;
-    f.sync_all().map_err(|e| e.to_string())?;
-    Ok(key)
+pub fn save_identity(key: &[u8; 32]) -> Result<(), String> {
+    crate::blob::write_atomic(&bw_proto::paths::identity_path(), key)
 }
 
 pub fn server_public(device: &Device) -> Result<[u8; 32], String> {

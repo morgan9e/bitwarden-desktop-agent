@@ -54,6 +54,18 @@ impl Bridge {
             }
         }
     }
+
+    // The PIN stands in for the biometric prompt, so verification is a full
+    // unlock whose key is thrown away.
+    fn verify_user(&self) -> bool {
+        match self.unseal_key() {
+            Some(mut key_b64) => {
+                key_b64.zeroize();
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 pub struct Session {
@@ -196,8 +208,13 @@ impl Session {
                 Some(self.reply(cmd, mid, json!({"response": 0})))
             }
             "authenticateWithBiometrics" => {
-                crate::log::info("-> authenticated");
-                Some(self.reply(cmd, mid, json!({"response": true})))
+                let verified = self.bridge.verify_user();
+                crate::log::info(if verified {
+                    "-> authenticated"
+                } else {
+                    "-> authentication failed"
+                });
+                Some(self.reply(cmd, mid, json!({"response": verified})))
             }
             _ => {
                 crate::log::warn(&format!("unhandled command: {cmd}"));
@@ -251,5 +268,63 @@ impl Handler for Session {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::device::Device;
+    use crate::testutil::{scripted, KeyServer, StateDir};
+
+    fn authenticate(pins: &[&str]) -> (Value, Option<String>) {
+        let device = Device::load(&bw_proto::paths::device_path()).unwrap();
+        let bridge = Arc::new(Bridge::new(Unlocker::new(device, scripted(pins))));
+        let mut session = Session::new(bridge);
+        let reply = session
+            .dispatch(&json!({}), "authenticateWithBiometrics", 7)
+            .unwrap();
+        (reply, session.pending_key.take())
+    }
+
+    #[test]
+    fn authenticate_with_biometrics_requires_the_pin() {
+        let _state = StateDir::new("verify");
+        let server = KeyServer::start("verify");
+        crate::enroll::seal(
+            &[0x5a; 64],
+            "user-1",
+            "a@example.com",
+            "test",
+            Some(server.enrollment("laptop")),
+            &scripted(&["11111111", "11111111"]),
+        )
+        .unwrap();
+
+        let (reply, pending) = authenticate(&["11111111"]);
+        assert_eq!(reply["response"], true);
+        assert!(reply.get("userKeyB64").is_none());
+        assert!(pending.is_none(), "verification must not stage the user key");
+
+        assert_eq!(authenticate(&["99999999"]).0["response"], false);
+        assert_eq!(authenticate(&[]).0["response"], false);
+    }
+
+    #[test]
+    fn authenticate_with_biometrics_fails_when_not_enrolled() {
+        let _state = StateDir::new("verify-unenrolled");
+        let device = Device {
+            device_id: "00".repeat(16),
+            user_id: "user-1".into(),
+            email: "a@example.com".into(),
+            label: "test".into(),
+            server: None,
+            server_pub: None,
+        };
+        let bridge = Arc::new(Bridge::new(Unlocker::new(device, scripted(&["11111111"]))));
+        let reply = Session::new(bridge)
+            .dispatch(&json!({}), "authenticateWithBiometrics", 7)
+            .unwrap();
+        assert_eq!(reply["response"], false);
     }
 }

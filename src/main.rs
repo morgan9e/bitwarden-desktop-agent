@@ -9,6 +9,8 @@ mod ipc;
 mod kdf;
 mod log;
 mod net;
+#[cfg(test)]
+mod testutil;
 mod unlock;
 
 use std::sync::Arc;

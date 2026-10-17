@@ -40,6 +40,16 @@ hkdf = "0.12"
 toml = "0.8"
 bw-proto = { path = "bw-proto" }
 
+[dev-dependencies]
+bw-key = { path = "bw-key" }
+
+# scrypt at N=2^17 takes seconds per call unoptimised; keep `cargo test` usable.
+[profile.dev.package.scrypt]
+opt-level = 3
+
+[profile.dev.package.salsa20]
+opt-level = 3
+
 [profile.release]
 strip = true
 lto = true

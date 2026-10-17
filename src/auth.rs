@@ -44,13 +44,7 @@ pub fn login(
         password, email, kdf_type, kdf_iter, kdf_mem, kdf_par,
     ));
 
-    let mut pw_hash = {
-        let mut buf = [0u8; 32];
-        pbkdf2::pbkdf2_hmac::<Sha256>(master_key.as_slice(), password.as_bytes(), 1, &mut buf);
-        let h = B64.encode(buf);
-        buf.zeroize();
-        h
-    };
+    let mut pw_hash = master_password_hash(&master_key, password);
 
     let device_id = uuid::Uuid::new_v4().to_string();
     let form = [
@@ -243,6 +237,8 @@ fn derive_master_key(
             key
         }
         1 => {
+            // Bitwarden feeds Argon2id SHA-256(salt), not the raw email.
+            let salt = <Sha256 as sha2::Digest>::digest(&salt);
             let params = argon2::Params::new(mem * 1024, iters, par, Some(32))
                 .unwrap_or_else(|e| crate::log::fatal(&format!("argon2 params: {e}")));
             let argon = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
@@ -254,6 +250,14 @@ fn derive_master_key(
         }
         _ => crate::log::fatal(&format!("unsupported kdf type: {kdf}")),
     }
+}
+
+fn master_password_hash(master_key: &[u8], password: &str) -> String {
+    let mut buf = [0u8; 32];
+    pbkdf2::pbkdf2_hmac::<Sha256>(master_key, password.as_bytes(), 1, &mut buf);
+    let h = B64.encode(buf);
+    buf.zeroize();
+    h
 }
 
 fn stretch(master_key: &[u8]) -> SymmetricKey {
@@ -269,4 +273,56 @@ fn stretch(master_key: &[u8]) -> SymmetricKey {
     combined.extend_from_slice(&enc);
     combined.extend_from_slice(&mac);
     SymmetricKey::new(combined)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Vectors from bitwarden/sdk-internal, crates/bitwarden-crypto/src/keys/{kdf,master_key}.rs.
+
+    #[test]
+    fn pbkdf2_master_key_matches_the_sdk() {
+        let key = derive_master_key("67t9b5g67$%Dh89n", "test_key", 0, 10_000, 0, 0);
+        assert_eq!(
+            key,
+            [
+                31, 79, 104, 226, 150, 71, 177, 90, 194, 80, 172, 209, 17, 129, 132, 81, 138, 167,
+                69, 167, 254, 149, 2, 27, 39, 197, 64, 42, 22, 195, 86, 75
+            ]
+        );
+    }
+
+    #[test]
+    fn argon2id_master_key_matches_the_sdk() {
+        let key = derive_master_key("67t9b5g67$%Dh89n", "test_key", 1, 4, 32, 2);
+        assert_eq!(
+            key,
+            [
+                207, 240, 225, 177, 162, 19, 163, 76, 98, 106, 179, 175, 224, 9, 17, 240, 20, 147,
+                237, 47, 246, 150, 141, 184, 62, 225, 131, 242, 51, 53, 225, 242
+            ]
+        );
+    }
+
+    #[test]
+    fn pbkdf2_password_hash_matches_the_sdk_and_normalises_the_email() {
+        for email in ["test@bitwarden.com", "TEST@bitwarden.com", " test@bitwarden.com"] {
+            let key = derive_master_key("asdfasdf", email, 0, 100_000, 0, 0);
+            assert_eq!(
+                master_password_hash(&key, "asdfasdf"),
+                "wmyadRMyBZOH7P/a/ucTCbSghKgdzDpPqUnu/DAVtSw=",
+                "{email:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn argon2id_password_hash_matches_the_sdk() {
+        let key = derive_master_key("asdfasdf", "test_salt", 1, 4, 32, 2);
+        assert_eq!(
+            master_password_hash(&key, "asdfasdf"),
+            "PR6UjYmjmppTYcdyTiNbAhPJuQQOmynKbdEl1oyi/iQ="
+        );
+    }
 }

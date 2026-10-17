@@ -199,6 +199,7 @@ dependencies = [
  "aes-gcm",
  "argon2",
  "base64",
+ "bw-key",
  "bw-proto",
  "cbc",
  "clap",
