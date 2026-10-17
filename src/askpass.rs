@@ -93,11 +93,14 @@ fn ssh_askpass() -> Option<Prompter> {
     }))
 }
 
+#[cfg(windows)]
+fn windows_dialog() -> Prompter {
+    Box::new(crate::winprompt::prompt)
+}
+
 fn which(name: &str) -> Option<String> {
-    std::env::var_os("PATH")?
-        .to_str()?
-        .split(':')
-        .map(|dir| std::path::Path::new(dir).join(name))
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(name))
         .find(|p| p.is_file())
         .map(|p| p.to_string_lossy().into_owned())
 }
@@ -105,6 +108,8 @@ fn which(name: &str) -> Option<String> {
 pub fn get_prompter(name: Option<&str>) -> Prompter {
     match name {
         Some("cli") => cli(),
+        #[cfg(windows)]
+        Some("windows") => windows_dialog(),
         Some("osascript") => osascript(),
         Some("adw-askpass") => adw_askpass(),
         Some("zenity") => zenity(),
@@ -113,22 +118,30 @@ pub fn get_prompter(name: Option<&str>) -> Prompter {
             crate::log::fatal("SSH_ASKPASS not set and ssh-askpass not found")
         }),
         Some(other) => crate::log::fatal(&format!("unknown askpass provider: {other}")),
-        None => {
-            if cfg!(target_os = "macos") {
-                return osascript();
-            }
-            if which("adw-askpass").is_some() {
-                return adw_askpass();
-            }
-            if which("zenity").is_some() {
-                return zenity();
-            }
-            if which("kdialog").is_some() {
-                return kdialog();
-            }
-            cli()
-        }
+        None => default_prompter(),
     }
+}
+
+#[cfg(windows)]
+fn default_prompter() -> Prompter {
+    windows_dialog()
+}
+
+#[cfg(not(windows))]
+fn default_prompter() -> Prompter {
+    if cfg!(target_os = "macos") {
+        return osascript();
+    }
+    if which("adw-askpass").is_some() {
+        return adw_askpass();
+    }
+    if which("zenity").is_some() {
+        return zenity();
+    }
+    if which("kdialog").is_some() {
+        return kdialog();
+    }
+    cli()
 }
 
 #[allow(dead_code)]

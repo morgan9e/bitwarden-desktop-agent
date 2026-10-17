@@ -9,8 +9,13 @@ use bw_key::{alert, db, server, state};
 use crate::askpass::Prompter;
 use crate::enroll::ServerEnrollment;
 
-// The state directory comes from XDG_STATE_HOME, which is process-wide.
+// The state directory comes from an environment variable, which is process-wide.
 static ENV: Mutex<()> = Mutex::new(());
+
+#[cfg(unix)]
+const STATE_ENV: &str = "XDG_STATE_HOME";
+#[cfg(windows)]
+const STATE_ENV: &str = "LOCALAPPDATA";
 
 pub struct StateDir {
     dir: PathBuf,
@@ -22,7 +27,7 @@ impl StateDir {
         let env = ENV.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("bw-agent-test-{name}-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
-        std::env::set_var("XDG_STATE_HOME", &dir);
+        std::env::set_var(STATE_ENV, &dir);
         bw_proto::paths::ensure_state_dir().unwrap();
         Self { dir, _env: env }
     }

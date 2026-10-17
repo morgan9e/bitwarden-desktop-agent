@@ -12,6 +12,10 @@ mod net;
 #[cfg(test)]
 mod testutil;
 mod unlock;
+#[cfg(windows)]
+mod winpipe;
+#[cfg(windows)]
+mod winprompt;
 
 use std::sync::Arc;
 
@@ -97,7 +101,6 @@ fn serve(prompt: askpass::Prompter) {
     log::info(&format!("device {} ({})", device.device_id, device.email));
 
     let bridge = Arc::new(Bridge::new(Unlocker::new(device, prompt)));
-    let sock = bw_proto::paths::socket_path();
-    log::info(&format!("listening on {}", sock.display()));
-    ipc::serve(&sock, move || Session::new(bridge.clone()));
+    log::info(&format!("listening on {}", ipc::endpoint()));
+    ipc::serve(move || Session::new(bridge.clone()));
 }

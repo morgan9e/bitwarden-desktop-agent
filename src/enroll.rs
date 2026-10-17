@@ -221,7 +221,7 @@ pub fn status() {
         }
         Err(_) => println!("device.toml     : absent"),
     }
-    println!("socket          : {}", bw_proto::paths::socket_path().display());
+    println!("endpoint        : {}", crate::ipc::endpoint());
 }
 
 fn prompt_new_pin(prompt: &Prompter) -> Result<Zeroizing<String>, String> {

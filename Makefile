@@ -3,6 +3,8 @@ SERVER_PREFIX ?= /usr/local/bin
 
 STATIC_TARGET ?= x86_64-unknown-linux-musl
 STATIC_DIR     = target/$(STATIC_TARGET)/release
+WINDOWS_TARGET ?= x86_64-pc-windows-gnu
+WINDOWS_DIR     = target/$(WINDOWS_TARGET)/release
 CARGO_STATIC  := $(shell command -v cargo-zigbuild >/dev/null 2>&1 \
 	&& echo "cargo zigbuild" || echo "cargo build")
 
@@ -26,6 +28,15 @@ musl C toolchain for rusqlite (brew install cargo-zigbuild)"
 	@echo
 	@ls -l $(STATIC_DIR)/bw-keyd $(STATIC_DIR)/bw-keyctl
 	@command -v file >/dev/null 2>&1 && file $(STATIC_DIR)/bw-keyd || true
+
+# Windows client binaries, cross-built; install with docs/install-windows.ps1 -Source.
+windows:
+	@command -v rustup >/dev/null 2>&1 && { \
+		rustup target list --installed | grep -qx '$(WINDOWS_TARGET)' \
+			|| rustup target add $(WINDOWS_TARGET); \
+	} || true
+	$(CARGO_STATIC) -p bw-agent --bins --release --target $(WINDOWS_TARGET)
+	@ls -l $(WINDOWS_DIR)/bw-agent.exe $(WINDOWS_DIR)/bw-agentw.exe $(WINDOWS_DIR)/bw-proxy.exe
 
 install: all
 	mkdir -p $(PREFIX)
@@ -77,6 +88,6 @@ systemd-unload:
 clean:
 	cargo clean
 
-.PHONY: all submodules static \
+.PHONY: all submodules static windows \
 	install install-server install-nm uninstall uninstall-nm test \
 	launchd launchd-unload systemd systemd-unload clean

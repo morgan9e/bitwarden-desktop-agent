@@ -1,6 +1,9 @@
 
+#[cfg(unix)]
 use std::ffi::CStr;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::IpAddr;
+#[cfg(unix)]
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 pub const DEFAULT_IFACE: &str = "tailscale0";
 
@@ -16,6 +19,13 @@ pub fn is_tailnet(ip: &IpAddr) -> bool {
     }
 }
 
+// The key server is Linux-only; this only lets the crate build for client tests.
+#[cfg(not(unix))]
+pub fn addrs_of(iface: &str) -> Result<Vec<IpAddr>, String> {
+    Err(format!("{iface}: interface lookup is not supported on this platform"))
+}
+
+#[cfg(unix)]
 pub fn addrs_of(iface: &str) -> Result<Vec<IpAddr>, String> {
     let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
     if unsafe { libc::getifaddrs(&mut head) } != 0 {
@@ -64,6 +74,7 @@ pub fn tailnet_addr(iface: &str) -> Result<IpAddr, String> {
         })
 }
 
+#[cfg(unix)]
 unsafe fn from_sockaddr(sa: *const libc::sockaddr) -> Option<IpAddr> {
     match (*sa).sa_family as i32 {
         libc::AF_INET => {
@@ -106,6 +117,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn loopback_resolves_through_getifaddrs() {
         let addrs: Vec<IpAddr> = ["lo", "lo0"]

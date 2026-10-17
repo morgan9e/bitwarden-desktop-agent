@@ -6,16 +6,29 @@ pub const BLOB_FILE: &str = "blob";
 pub const DEVICE_FILE: &str = "device.toml";
 pub const SOCKET_FILE: &str = "s.bw";
 
-fn home() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
-}
-
+#[cfg(unix)]
 pub fn state_dir() -> PathBuf {
     let base = match std::env::var("XDG_STATE_HOME") {
         Ok(v) if !v.is_empty() => PathBuf::from(v),
-        _ => home().join(".local").join("state"),
+        _ => std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/tmp"))
+            .join(".local")
+            .join("state"),
+    };
+    base.join("bw-agent")
+}
+
+// %LOCALAPPDATA% is already private to the user and never roams.
+#[cfg(windows)]
+pub fn state_dir() -> PathBuf {
+    let base = match std::env::var("LOCALAPPDATA") {
+        Ok(v) if !v.is_empty() => PathBuf::from(v),
+        _ => std::env::var("USERPROFILE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("AppData")
+            .join("Local"),
     };
     base.join("bw-agent")
 }
@@ -25,8 +38,11 @@ pub fn ensure_state_dir() -> std::io::Result<PathBuf> {
     let existed = dir.exists();
     std::fs::create_dir_all(&dir)?;
 
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    }
 
     if !existed {
         exclude_from_backup(&dir);
@@ -36,6 +52,18 @@ pub fn ensure_state_dir() -> std::io::Result<PathBuf> {
 
 pub fn socket_path() -> PathBuf {
     state_dir().join(SOCKET_FILE)
+}
+
+/// Named pipes live in one machine-wide namespace, so the name is derived
+/// from the (per-user) state directory rather than fixed.
+pub fn pipe_name() -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(state_dir().to_string_lossy().to_lowercase().as_bytes());
+    let mut tag = String::with_capacity(16);
+    for b in &digest[..8] {
+        tag.push_str(&format!("{b:02x}"));
+    }
+    format!(r"\\.\pipe\bw-agent-{tag}")
 }
 
 pub fn blob_path() -> PathBuf {
