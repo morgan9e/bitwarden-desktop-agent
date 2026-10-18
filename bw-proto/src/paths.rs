@@ -57,8 +57,12 @@ pub fn socket_path() -> PathBuf {
 /// Named pipes live in one machine-wide namespace, so the name is derived
 /// from the (per-user) state directory rather than fixed.
 pub fn pipe_name() -> String {
+    pipe_name_for(&state_dir())
+}
+
+pub fn pipe_name_for(state_dir: &std::path::Path) -> String {
     use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(state_dir().to_string_lossy().to_lowercase().as_bytes());
+    let digest = Sha256::digest(state_dir.to_string_lossy().to_lowercase().as_bytes());
     let mut tag = String::with_capacity(16);
     for b in &digest[..8] {
         tag.push_str(&format!("{b:02x}"));

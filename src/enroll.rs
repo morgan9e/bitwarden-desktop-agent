@@ -48,7 +48,32 @@ pub fn enroll(
 
     let result = seal(&user_key, &user_id, email, label, server, prompt).map(|_| ());
     user_key.zeroize();
+    #[cfg(windows)]
+    if result.is_ok() {
+        start_background_agent();
+    }
     result
+}
+
+// Windows has no launchd/systemd to start the agent; do it here, since the
+// browser can't unlock until it runs. A running agent rereads device.toml.
+#[cfg(windows)]
+fn start_background_agent() {
+    if crate::winlaunch::agent_running() {
+        crate::log::info("bw-agent is already running and will use the new enrollment");
+        return;
+    }
+    let dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|d| d.to_path_buf()));
+    match dir.map(|d| crate::winlaunch::start_agent(&d)) {
+        Some(Ok(true)) => crate::log::info("started bw-agent in the background"),
+        Some(Err(e)) => crate::log::warn(&format!("could not start bw-agent: {e}")),
+        _ => crate::log::warn(&format!(
+            "{} not found beside bw-agent; start the agent yourself",
+            crate::winlaunch::LAUNCHER
+        )),
+    }
 }
 
 pub(crate) fn seal(
@@ -315,6 +340,22 @@ mod tests {
         );
         assert_eq!(std::fs::read(bw_proto::paths::identity_path()).unwrap(), identity);
         assert_eq!(&unlock_with("11111111").unwrap()[..], &USER_KEY);
+    }
+
+    #[test]
+    fn a_running_agent_follows_a_re_enrollment() {
+        let _state = StateDir::new("follow");
+        let first = KeyServer::start("follow-a");
+        let second = KeyServer::start("follow-b");
+        seal_with("11111111", Some(first.enrollment("laptop"))).unwrap();
+
+        // The agent loaded this enrollment when it started...
+        let device = Device::load(&bw_proto::paths::device_path()).unwrap();
+        let running = Unlocker::new(device, scripted(&["22222222"]));
+
+        // ...and keeps running while the device moves to another server.
+        seal_with("22222222", Some(second.enrollment("laptop"))).unwrap();
+        assert_eq!(&running.unlock().unwrap()[..], &USER_KEY);
     }
 
     #[test]

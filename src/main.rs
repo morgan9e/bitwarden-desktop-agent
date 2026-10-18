@@ -13,6 +13,8 @@ mod net;
 mod testutil;
 mod unlock;
 #[cfg(windows)]
+mod winlaunch;
+#[cfg(windows)]
 mod winpipe;
 #[cfg(windows)]
 mod winprompt;

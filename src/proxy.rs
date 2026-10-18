@@ -3,6 +3,10 @@ use std::thread;
 
 #[cfg(windows)]
 #[allow(dead_code)]
+#[path = "winlaunch.rs"]
+mod winlaunch;
+#[cfg(windows)]
+#[allow(dead_code)]
 #[path = "winpipe.rs"]
 mod winpipe;
 
@@ -85,8 +89,35 @@ fn connect() -> io::Result<(impl Read + Send + 'static, impl Write)> {
         }
     }
 
-    let pipe = Arc::new(winpipe::Pipe::connect(&bw_proto::paths::pipe_name())?);
+    use std::time::Duration;
+
+    let name = bw_proto::paths::pipe_name();
+    let pipe = match winpipe::Pipe::connect_within(&name, Duration::from_millis(300)) {
+        Ok(p) => p,
+        // No agent yet: there is no service manager starting it on Windows,
+        // so the first browser connection does.
+        Err(e) if e.kind() == io::ErrorKind::NotFound && enrolled() => {
+            let exe = std::env::current_exe()?;
+            let dir = exe.parent().ok_or(e)?;
+            if !winlaunch::start_agent(dir)? {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("no agent running and no {} beside bw-proxy", winlaunch::LAUNCHER),
+                ));
+            }
+            winpipe::Pipe::connect_within(&name, Duration::from_secs(5))?
+        }
+        Err(e) => return Err(e),
+    };
+    let pipe = Arc::new(pipe);
     Ok((Shared(pipe.clone()), Shared(pipe)))
+}
+
+// Starting an agent that isn't enrolled would only fail, again, on every
+// connection attempt the browser makes.
+#[cfg(windows)]
+fn enrolled() -> bool {
+    bw_proto::paths::blob_path().is_file() && bw_proto::paths::device_path().is_file()
 }
 
 const CONNECTED: &[u8] = b"{\"command\":\"connected\"}";

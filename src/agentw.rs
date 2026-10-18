@@ -4,6 +4,23 @@
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+// Held for the life of the process. The proxy and `enroll` both start a
+// launcher on demand, so a second one must back off rather than race the
+// first agent for the pipe. Named after the pipe: per user and state dir.
+#[cfg(windows)]
+fn claim_single_instance() -> bool {
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+
+    let pipe = bw_proto::paths::pipe_name();
+    let name: Vec<u16> = format!(r"Local\{}", pipe.rsplit('\\').next().unwrap_or("bw-agent"))
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let mutex = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+    !mutex.is_null() && unsafe { GetLastError() } != ERROR_ALREADY_EXISTS
+}
+
 #[cfg(windows)]
 fn main() {
     use std::fs::{File, OpenOptions};
@@ -16,6 +33,10 @@ fn main() {
     const RESTART_DELAY: Duration = Duration::from_secs(5);
     const FAILURE_WINDOW: Duration = Duration::from_secs(60);
     const MAX_FAILURES: usize = 5;
+
+    if !claim_single_instance() {
+        return;
+    }
 
     let Ok(exe) = std::env::current_exe() else { return };
     let agent = exe.with_file_name("bw-agent.exe");

@@ -38,8 +38,10 @@ impl Unlocker {
         Self { device, prompt }
     }
 
-    pub fn device(&self) -> &Device {
-        &self.device
+    /// The current enrollment, reread on each use so that a running agent
+    /// follows a re-enrollment without being restarted.
+    pub fn device(&self) -> Device {
+        Device::load(&bw_proto::paths::device_path()).unwrap_or_else(|_| self.device.clone())
     }
 
     pub fn unlock(&self) -> Result<Zeroizing<Vec<u8>>, UnlockError> {
@@ -80,7 +82,7 @@ impl Unlocker {
         &self,
         pin: &str,
     ) -> Result<Option<Zeroizing<[u8; kdf::OPRF_OUT_LEN]>>, UnlockError> {
-        let server = ServerKey::for_device(&self.device).map_err(|e| {
+        let server = ServerKey::for_device(&self.device()).map_err(|e| {
             crate::log::error(&e);
             UnlockError::Failed
         })?;

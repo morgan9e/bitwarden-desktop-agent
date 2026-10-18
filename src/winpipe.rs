@@ -210,8 +210,13 @@ pub struct Pipe {
 
 impl Pipe {
     pub fn connect(name: &str) -> io::Result<Self> {
+        Self::connect_within(name, CONNECT_TIMEOUT)
+    }
+
+    /// Like `connect`, waiting up to `timeout` for the pipe to appear.
+    pub fn connect_within(name: &str, timeout: Duration) -> io::Result<Self> {
         let wname = wide(name);
-        let deadline = Instant::now() + CONNECT_TIMEOUT;
+        let deadline = Instant::now() + timeout;
         let handle = loop {
             let h = unsafe {
                 CreateFileW(
